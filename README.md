@@ -85,3 +85,11 @@ Markdown body...
 - Preview payloads are stored temporarily in extension storage and old payloads are cleaned up after about 1 hour.
 - Running export job state has stale recovery; if progress has not updated for about 5 minutes, controls are unlocked on the next background startup or job-state check.
 - Some pages block script injection, including browser internal pages and some extension stores.
+
+## Privacy
+
+Article Markdown Clipper processes page content locally in the browser.
+
+It does not send page content or personal data to any external server.
+
+See [Privacy Policy](./PRIVACY.md).
