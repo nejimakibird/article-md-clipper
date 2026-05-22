@@ -41,10 +41,15 @@ h1 {
 }
 
 #status {
-  min-height: 20px;
+  display: block;
+  height: 20px;
   margin: 6px 0 0;
+  overflow: hidden;
   color: #526070;
   font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #status[data-kind="success"] {
@@ -235,7 +240,8 @@ button.secondary:hover {
   gap: 8px;
 }
 
-.metadata div {
+.metadata div,
+.progress-details div {
   min-width: 0;
   border: 1px solid #d9e0e8;
   border-radius: 6px;
@@ -243,26 +249,38 @@ button.secondary:hover {
   background: #ffffff;
 }
 
-.metadata .source {
+.metadata .source,
+.progress-details .progress-current {
   grid-column: 1 / -1;
 }
 
 .metadata span,
-.metadata strong {
+.metadata strong,
+.progress-details span,
+.progress-details strong {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.metadata span {
+.metadata span,
+.progress-details span {
   margin-bottom: 4px;
   color: #617082;
   font-size: 12px;
 }
 
-.metadata strong {
+.metadata strong,
+.progress-details strong {
   color: #17202a;
   font-size: 13px;
   font-weight: 650;
+}
+
+.progress-details {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
 }
 
 textarea {
@@ -437,9 +455,10 @@ textarea {
   }
 
   #status {
-    min-height: 16px;
+    height: 16px;
     margin-top: 3px;
     font-size: 12px;
+    line-height: 16px;
   }
 
   .preview-toolbar {
@@ -469,21 +488,25 @@ textarea {
     gap: 6px;
   }
 
-  .metadata {
+  .metadata,
+  .progress-details {
     grid-template-columns: 1fr;
     gap: 6px;
   }
 
-  .metadata div {
+  .metadata div,
+  .progress-details div {
     padding: 6px 8px;
   }
 
-  .metadata span {
+  .metadata span,
+  .progress-details span {
     margin-bottom: 2px;
     font-size: 11px;
   }
 
-  .metadata strong {
+  .metadata strong,
+  .progress-details strong {
     font-size: 12px;
   }
 

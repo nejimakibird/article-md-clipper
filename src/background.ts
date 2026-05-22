@@ -7,8 +7,10 @@ import type {
   OpenPreviewMessage,
   OutputMessage,
   PreviewPayload,
+  PreviewPayloadUpdatedMessage,
   PreviewResponse,
-  StartJobResponse
+  StartJobResponse,
+  UpdatePreviewPayloadMessage
 } from "./types";
 
 const JOB_STATE_KEY = "articleMarkdownClipperJobState";
@@ -36,6 +38,10 @@ chrome.runtime.onMessage.addListener(
     _sender: chrome.runtime.MessageSender,
     sendResponse: (response: ClipResponse | JobState | PreviewResponse | StartJobResponse) => void
   ) => {
+    if (isPreviewPayloadUpdatedMessage(message)) {
+      return false;
+    }
+
     if (isOutputMessage(message)) {
       handleOutputMessage(message)
         .then(sendResponse)
@@ -62,12 +68,19 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+function isPreviewPayloadUpdatedMessage(
+  message: JobControlMessage | OutputMessage | PreviewPayloadUpdatedMessage
+): message is PreviewPayloadUpdatedMessage {
+  return message.type === "PREVIEW_PAYLOAD_UPDATED";
+}
+
 function isOutputMessage(message: JobControlMessage | OutputMessage): message is OutputMessage {
   return (
     message.type === "CLEANUP_PREVIEW_PAYLOADS" ||
     message.type === "DOWNLOAD_MARKDOWN" ||
     message.type === "GET_PREVIEW_PAYLOAD" ||
-    message.type === "OPEN_PREVIEW"
+    message.type === "OPEN_PREVIEW" ||
+    message.type === "UPDATE_PREVIEW_PAYLOAD"
   );
 }
 
@@ -82,6 +95,10 @@ async function handleOutputMessage(message: OutputMessage): Promise<ClipResponse
 
   if (message.type === "GET_PREVIEW_PAYLOAD") {
     return getPreviewPayload(message);
+  }
+
+  if (message.type === "UPDATE_PREVIEW_PAYLOAD") {
+    return updatePreviewPayload(message);
   }
 
   await cleanupPreviewPayloads();
@@ -117,6 +134,7 @@ async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse
     filename: message.payload.filename,
     markdown: message.payload.markdown,
     metadata: message.payload.metadata,
+    progress: message.payload.progress,
     previewId
   };
 
@@ -133,6 +151,45 @@ async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse
     ok: true,
     previewId,
     tabId: tab.id
+  };
+}
+
+async function updatePreviewPayload(message: UpdatePreviewPayloadMessage): Promise<PreviewResponse> {
+  const key = previewStorageKey(message.payload.previewId);
+  const stored = await chrome.storage.local.get(key);
+  const currentPayload = stored[key] as PreviewPayload | undefined;
+
+  if (!currentPayload) {
+    return {
+      ok: false,
+      error: "Preview data was not found. Generate the Markdown again."
+    };
+  }
+
+  const nextPayload: PreviewPayload = {
+    ...currentPayload,
+    markdown: message.payload.markdown,
+    metadata: message.payload.metadata ?? currentPayload.metadata,
+    progress: message.payload.progress ?? currentPayload.progress
+  };
+
+  await chrome.storage.local.set({
+    [key]: nextPayload
+  });
+
+  void chrome.runtime
+    .sendMessage({
+      type: "PREVIEW_PAYLOAD_UPDATED",
+      payload: {
+        previewId: message.payload.previewId
+      }
+    })
+    .catch(() => undefined);
+
+  return {
+    ok: true,
+    payload: nextPayload,
+    previewId: message.payload.previewId
   };
 }
 

@@ -21,11 +21,22 @@ export type OutputMetadata = {
   title?: string;
 };
 
+export type PreviewProgress = {
+  completed: number;
+  currentTitle?: string;
+  currentUrl?: string;
+  failed: number;
+  isRunning: boolean;
+  statusMessage: string;
+  total: number;
+};
+
 export type PreviewPayload = {
   createdAt: string;
   filename: string;
   markdown: string;
   metadata?: OutputMetadata;
+  progress?: PreviewProgress;
   previewId: string;
 };
 
@@ -35,6 +46,24 @@ export type OpenPreviewMessage = {
     filename: string;
     markdown: string;
     metadata?: OutputMetadata;
+    progress?: PreviewProgress;
+  };
+};
+
+export type UpdatePreviewPayloadMessage = {
+  type: "UPDATE_PREVIEW_PAYLOAD";
+  payload: {
+    markdown: string;
+    metadata?: OutputMetadata;
+    previewId: string;
+    progress?: PreviewProgress;
+  };
+};
+
+export type PreviewPayloadUpdatedMessage = {
+  type: "PREVIEW_PAYLOAD_UPDATED";
+  payload: {
+    previewId: string;
   };
 };
 
@@ -65,7 +94,8 @@ export type OutputMessage =
   | CleanupPreviewPayloadsMessage
   | DownloadMarkdownMessage
   | GetPreviewPayloadMessage
-  | OpenPreviewMessage;
+  | OpenPreviewMessage
+  | UpdatePreviewPayloadMessage;
 
 export type JobType = "current-page" | "selected-links";
 

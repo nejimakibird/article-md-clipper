@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { downloadMarkdown } from "../lib/output";
-import type { PreviewPayload, PreviewResponse } from "../types";
+import type { PreviewPayload, PreviewPayloadUpdatedMessage, PreviewResponse } from "../types";
 
 const previewPage = document.querySelector<HTMLElement>("#previewPage");
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
@@ -10,6 +10,9 @@ const characterCountElement = document.querySelector<HTMLElement>("#characterCou
 const articleCountElement = document.querySelector<HTMLElement>("#articleCount");
 const generatedAtElement = document.querySelector<HTMLElement>("#generatedAt");
 const sourceUrlElement = document.querySelector<HTMLElement>("#sourceUrl");
+const progressCountElement = document.querySelector<HTMLElement>("#progressCount");
+const progressFailedElement = document.querySelector<HTMLElement>("#progressFailed");
+const progressCurrentElement = document.querySelector<HTMLElement>("#progressCurrent");
 const previewDetails = document.querySelector<HTMLElement>("#previewDetails");
 const previewContent = document.querySelector<HTMLElement>("#previewContent");
 const markdownText = document.querySelector<HTMLTextAreaElement>("#markdownText");
@@ -28,6 +31,7 @@ const modifiedStatus = document.querySelector<HTMLElement>("#modifiedStatus");
 const NARROW_VIEWPORT_QUERY = "(max-width: 640px)";
 const LARGE_MARKDOWN_RENDER_WARNING_CHARS = 100_000;
 const LIVE_PREVIEW_MAX_CHARS = 50_000;
+const PROGRESSIVE_RENDER_INTERVAL_MS = 500;
 
 type ViewMode = "plain" | "rendered" | "split";
 
@@ -40,6 +44,10 @@ let isRendering = false;
 let renderAgainAfterCurrent = false;
 let detailsExpanded = true;
 let currentViewMode: ViewMode = "rendered";
+let currentPreviewId = "";
+let progressPollTimer: number | null = null;
+let progressiveRenderTimer: number | null = null;
+let lastProgressiveRenderStartedAt = 0;
 
 const narrowViewportMedia = window.matchMedia(NARROW_VIEWPORT_QUERY);
 
@@ -90,6 +98,15 @@ narrowViewportMedia.addEventListener("change", () => {
   handleViewportModeConstraints();
 });
 
+chrome.runtime.onMessage.addListener((message: PreviewPayloadUpdatedMessage) => {
+  if (message.type !== "PREVIEW_PAYLOAD_UPDATED" || message.payload.previewId !== currentPreviewId) {
+    return false;
+  }
+
+  void refreshPreviewPayload();
+  return false;
+});
+
 void initializePreview();
 
 async function initializePreview(): Promise<void> {
@@ -104,21 +121,20 @@ async function initializePreview(): Promise<void> {
     return;
   }
 
+  currentPreviewId = previewId;
+
   try {
-    const response = (await chrome.runtime.sendMessage({
-      type: "GET_PREVIEW_PAYLOAD",
-      payload: {
-        previewId
-      }
-    })) as PreviewResponse;
+    const response = await getPreviewPayload(previewId);
 
     if (!response.ok || !response.payload) {
       throw new Error(response.ok ? "Preview data was not found." : response.error);
     }
 
     previewPayload = response.payload;
-    renderPreview(response.payload);
-    setStatus("Preview ready.", "success");
+    await renderPreview(response.payload, true);
+    if (!response.payload.progress) {
+      setStatus("Preview ready.", "success");
+    }
     setControlsDisabled(false);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Could not load preview.", "error");
@@ -126,7 +142,36 @@ async function initializePreview(): Promise<void> {
   }
 }
 
-function renderPreview(payload: PreviewPayload): void {
+async function getPreviewPayload(previewId: string): Promise<PreviewResponse> {
+  return (await chrome.runtime.sendMessage({
+    type: "GET_PREVIEW_PAYLOAD",
+    payload: {
+      previewId
+    }
+  })) as PreviewResponse;
+}
+
+async function refreshPreviewPayload(): Promise<void> {
+  if (!currentPreviewId) {
+    return;
+  }
+
+  try {
+    const response = await getPreviewPayload(currentPreviewId);
+
+    if (!response.ok || !response.payload) {
+      throw new Error(response.ok ? "Preview data was not found." : response.error);
+    }
+
+    previewPayload = response.payload;
+    await renderPreview(response.payload, false);
+    setControlsDisabled(false);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Could not update preview.", "error");
+  }
+}
+
+async function renderPreview(payload: PreviewPayload, resetViewMode: boolean): Promise<void> {
   document.title = `${payload.filename} - Article Markdown Clipper Preview`;
   if (filenameElement) filenameElement.textContent = payload.filename;
   if (characterCountElement) characterCountElement.textContent = payload.markdown.length.toLocaleString();
@@ -138,15 +183,30 @@ function renderPreview(payload: PreviewPayload): void {
   currentMarkdown = payload.markdown;
   isModified = false;
   if (markdownText) markdownText.value = currentMarkdown;
-  if (autoUpdatePreviewInput) autoUpdatePreviewInput.checked = currentMarkdown.length < LIVE_PREVIEW_MAX_CHARS;
+  if (autoUpdatePreviewInput && resetViewMode) {
+    autoUpdatePreviewInput.checked = currentMarkdown.length < LIVE_PREVIEW_MAX_CHARS;
+  }
   if (currentMarkdown.length >= LIVE_PREVIEW_MAX_CHARS) {
     setStatus("Large Markdown detected. Auto update is off by default.", undefined);
   }
   renderedHtmlCache = null;
-  if (renderedMarkdown) renderedMarkdown.replaceChildren();
   updateModifiedStatus();
   updatePreviewButtonState();
-  void setViewMode("rendered");
+  updateProgressPolling(payload);
+  setProgressStatus(payload);
+  updateProgressDetails(payload);
+
+  if (resetViewMode) {
+    if (renderedMarkdown) renderedMarkdown.replaceChildren();
+    await setViewMode("rendered");
+  } else if (payload.progress?.isRunning) {
+    if (currentViewMode !== "plain") {
+      scheduleProgressiveRenderedPreviewUpdate();
+    }
+  } else {
+    clearProgressiveRenderTimer();
+    await updateRenderedPreview("progressive-final");
+  }
 }
 
 async function setViewMode(mode: ViewMode): Promise<void> {
@@ -165,11 +225,14 @@ async function setViewMode(mode: ViewMode): Promise<void> {
 
   if (nextMode !== "plain") {
     clearRenderDebounceTimer();
+    clearProgressiveRenderTimer();
     await updateRenderedPreview("mode-switch");
   }
 }
 
-async function updateRenderedPreview(reason: "auto" | "manual" | "mode-switch"): Promise<void> {
+async function updateRenderedPreview(
+  reason: "auto" | "manual" | "mode-switch" | "progressive" | "progressive-final"
+): Promise<void> {
   if (!previewPayload || !renderedMarkdown) {
     return;
   }
@@ -186,16 +249,24 @@ async function updateRenderedPreview(reason: "auto" | "manual" | "mode-switch"):
 
   isRendering = true;
   updatePreviewButtonState();
+  const shouldReportRenderStatus = reason === "auto" || reason === "manual" || reason === "mode-switch";
 
   try {
-    setStatus(reason === "auto" ? "Updating preview..." : "Rendering Markdown...", undefined);
+    if (shouldReportRenderStatus) {
+      setStatus(reason === "auto" ? "Updating preview..." : "Rendering Markdown...", undefined);
+    }
     const parsedHtml = await marked.parse(currentMarkdown, {
       async: false,
       gfm: true
     });
     renderedHtmlCache = DOMPurify.sanitize(parsedHtml);
     renderedMarkdown.innerHTML = renderedHtmlCache;
-    setStatus(reason === "auto" ? "Rendered preview updated." : "Rendered preview ready.", "success");
+    lastProgressiveRenderStartedAt = Date.now();
+    if (shouldReportRenderStatus) {
+      setStatus(reason === "auto" ? "Rendered preview updated." : "Rendered preview ready.", "success");
+    } else if (previewPayload?.progress) {
+      setProgressStatus(previewPayload);
+    }
   } catch (error) {
     setStatus(
       error instanceof Error ? `Could not update preview: ${error.message}` : "Could not update preview.",
@@ -207,7 +278,11 @@ async function updateRenderedPreview(reason: "auto" | "manual" | "mode-switch"):
 
     if (renderAgainAfterCurrent) {
       renderAgainAfterCurrent = false;
-      scheduleRenderedPreviewUpdate();
+      if (previewPayload?.progress?.isRunning) {
+        scheduleProgressiveRenderedPreviewUpdate();
+      } else {
+        scheduleRenderedPreviewUpdate();
+      }
     }
   }
 }
@@ -265,6 +340,87 @@ function handleViewportModeConstraints(): void {
   if (isNarrow && currentViewMode === "split") {
     void setViewMode("rendered");
   }
+}
+
+function setProgressStatus(payload: PreviewPayload): void {
+  if (!payload.progress) {
+    return;
+  }
+
+  const { completed, failed, isRunning, total } = payload.progress;
+  const compactMessage = isRunning
+    ? `Loading ${completed} / ${total}`
+    : failed > 0
+      ? `Complete with ${failed} failed`
+      : "Complete";
+  setStatus(compactMessage, isRunning ? undefined : "success");
+}
+
+function updateProgressDetails(payload: PreviewPayload): void {
+  const progress = payload.progress;
+
+  if (!progress) {
+    if (progressCountElement) progressCountElement.textContent = "-";
+    if (progressFailedElement) progressFailedElement.textContent = "0";
+    if (progressCurrentElement) progressCurrentElement.textContent = "-";
+    return;
+  }
+
+  if (progressCountElement) {
+    progressCountElement.textContent = `${progress.completed} / ${progress.total}`;
+  }
+
+  if (progressFailedElement) {
+    progressFailedElement.textContent = String(progress.failed);
+  }
+
+  if (progressCurrentElement) {
+    progressCurrentElement.textContent =
+      progress.currentTitle || progress.currentUrl || progress.statusMessage || "-";
+  }
+}
+
+function updateProgressPolling(payload: PreviewPayload): void {
+  if (payload.progress?.isRunning) {
+    if (progressPollTimer === null) {
+      progressPollTimer = window.setInterval(() => {
+        void refreshPreviewPayload();
+      }, 1000);
+    }
+    return;
+  }
+
+  if (progressPollTimer !== null) {
+    window.clearInterval(progressPollTimer);
+    progressPollTimer = null;
+  }
+}
+
+function scheduleProgressiveRenderedPreviewUpdate(): void {
+  if (currentViewMode === "plain") {
+    return;
+  }
+
+  if (progressiveRenderTimer !== null) {
+    return;
+  }
+
+  const elapsedMs = Date.now() - lastProgressiveRenderStartedAt;
+  const delayMs = Math.max(0, PROGRESSIVE_RENDER_INTERVAL_MS - elapsedMs);
+
+  progressiveRenderTimer = window.setTimeout(() => {
+    progressiveRenderTimer = null;
+    void updateRenderedPreview("progressive");
+  }, delayMs);
+}
+
+function clearProgressiveRenderTimer(): void {
+  if (progressiveRenderTimer === null) {
+    return;
+  }
+
+  window.clearTimeout(progressiveRenderTimer);
+  progressiveRenderTimer = null;
 }
 
 async function copyMarkdown(): Promise<void> {

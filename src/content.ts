@@ -17,6 +17,7 @@ import type {
   OutputMetadata,
   OutputMode,
   PageSnapshot,
+  PreviewProgress,
   PreviewResponse
 } from "./types";
 
@@ -226,6 +227,7 @@ async function exportSelectedLinks(
   let metadata: OutputMetadata | undefined;
   let finalStatus = "";
   let generatedMarkdown = false;
+  let progressivePreviewId: string | null = null;
 
   try {
     if (links.length === 0) {
@@ -236,6 +238,24 @@ async function exportSelectedLinks(
       throw new Error(`Select up to ${maxSelected} links.`);
     }
 
+    metadata = {
+      articleCount: 0,
+      capturedAt: capturedAt.toISOString(),
+      sourceUrl,
+      title: "Article Markdown Clipper Export"
+    };
+
+    if (outputMode === "preview") {
+      markdown = buildCombinedMarkdown(results, sourceUrl, capturedAt);
+      progressivePreviewId = await openProgressivePreview(markdown, filename, metadata, {
+        completed: 0,
+        failed: 0,
+        isRunning: true,
+        statusMessage: `Loading articles: 0 / ${links.length}, failed: 0`,
+        total: links.length
+      });
+    }
+
     for (const [index, link] of links.entries()) {
       await updateExportJobState({
         completed: index,
@@ -243,7 +263,30 @@ async function exportSelectedLinks(
         statusMessage: `Processing ${index + 1} / ${links.length}`,
         total: links.length
       });
-      results.push(await fetchAndConvertArticle(link));
+      const result = await fetchAndConvertArticle(link);
+      results.push(result);
+      const currentSavedCount = results.filter((item) => item.ok).length;
+      const currentFailedCount = results.length - currentSavedCount;
+      metadata = {
+        articleCount: currentSavedCount,
+        capturedAt: capturedAt.toISOString(),
+        sourceUrl,
+        title: "Article Markdown Clipper Export"
+      };
+      markdown = buildCombinedMarkdown(results, sourceUrl, capturedAt);
+
+      if (progressivePreviewId) {
+        await updateProgressivePreview(progressivePreviewId, markdown, metadata, {
+          completed: index + 1,
+          currentTitle: result.ok ? result.title : undefined,
+          currentUrl: result.sourceUrl,
+          failed: currentFailedCount,
+          isRunning: true,
+          statusMessage: `Loading articles: ${index + 1} / ${links.length}, failed: ${currentFailedCount}`,
+          total: links.length
+        });
+      }
+
       await updateExportJobState({
         completed: index + 1,
         failed: results.filter((result) => !result.ok).length,
@@ -256,7 +299,6 @@ async function exportSelectedLinks(
       }
     }
 
-    markdown = buildCombinedMarkdown(results, sourceUrl, capturedAt);
     savedCount = results.filter((result) => result.ok).length;
     failedCount = results.length - savedCount;
     metadata = {
@@ -274,7 +316,20 @@ async function exportSelectedLinks(
       total: links.length
     });
 
-    const outputMessage = await outputGeneratedMarkdown(markdown, filename, outputMode, metadata);
+    let outputMessage = "Opened Markdown preview.";
+
+    if (progressivePreviewId) {
+      await updateProgressivePreview(progressivePreviewId, markdown, metadata, {
+        completed: links.length,
+        failed: failedCount,
+        isRunning: false,
+        statusMessage: `Complete. Saved ${savedCount} articles, ${failedCount} failed.`,
+        total: links.length
+      });
+    } else {
+      outputMessage = await outputGeneratedMarkdown(markdown, filename, outputMode, metadata);
+    }
+
     finalStatus = [`Saved ${savedCount} articles, ${failedCount} failed.`, outputMessage]
       .filter(Boolean)
       .join(" ");
@@ -304,6 +359,52 @@ async function exportSelectedLinks(
       await failExportJob(finalStatus || "Could not export selected links.", failedCount);
     }
   }
+}
+
+async function openProgressivePreview(
+  markdown: string,
+  filename: string,
+  metadata: OutputMetadata,
+  progress: PreviewProgress
+): Promise<string | null> {
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      type: "OPEN_PREVIEW",
+      payload: {
+        filename,
+        markdown,
+        metadata,
+        progress
+      }
+    } satisfies OpenPreviewMessage)) as PreviewResponse;
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Could not open Markdown preview.");
+    }
+
+    return response.previewId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function updateProgressivePreview(
+  previewId: string,
+  markdown: string,
+  metadata: OutputMetadata,
+  progress: PreviewProgress
+): Promise<void> {
+  await chrome.runtime
+    .sendMessage({
+      type: "UPDATE_PREVIEW_PAYLOAD",
+      payload: {
+        markdown,
+        metadata,
+        previewId,
+        progress
+      }
+    })
+    .catch(() => undefined);
 }
 
 type ExportArticleResult =
@@ -372,12 +473,6 @@ function buildCombinedMarkdown(
     "---",
     "",
     "# Article Markdown Clipper Export",
-    "",
-    "## Table of Contents",
-    "",
-    ...results.map((result) =>
-      result.ok ? `- ${result.title} - ${result.sourceUrl}` : `- Failed: ${result.sourceUrl}`
-    ),
     "",
     ...results.flatMap((result, index) => articleResultToMarkdown(result, index + 1))
   ].join("\n");

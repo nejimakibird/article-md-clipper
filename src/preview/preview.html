@@ -66,6 +66,20 @@
             <button id="updatePreviewButton" type="button">Update preview</button>
             <span id="modifiedStatus" class="modified-status" hidden>Modified</span>
           </section>
+          <section class="progress-details" aria-label="Extraction progress">
+            <div>
+              <span>Progress</span>
+              <strong id="progressCount">-</strong>
+            </div>
+            <div>
+              <span>Failed</span>
+              <strong id="progressFailed">0</strong>
+            </div>
+            <div class="progress-current">
+              <span>Current</span>
+              <strong id="progressCurrent">-</strong>
+            </div>
+          </section>
           <p id="renderWarning" class="render-warning" hidden>Large Markdown may take a moment to render.</p>
         </section>
         <section class="preview-content mode-rendered" id="previewContent" aria-label="Markdown content">
