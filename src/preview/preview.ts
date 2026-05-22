@@ -3,18 +3,21 @@ import { marked } from "marked";
 import { downloadMarkdown } from "../lib/output";
 import type { PreviewPayload, PreviewResponse } from "../types";
 
+const previewPage = document.querySelector<HTMLElement>("#previewPage");
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
 const filenameElement = document.querySelector<HTMLElement>("#filename");
 const characterCountElement = document.querySelector<HTMLElement>("#characterCount");
 const articleCountElement = document.querySelector<HTMLElement>("#articleCount");
 const generatedAtElement = document.querySelector<HTMLElement>("#generatedAt");
 const sourceUrlElement = document.querySelector<HTMLElement>("#sourceUrl");
+const previewDetails = document.querySelector<HTMLElement>("#previewDetails");
 const previewContent = document.querySelector<HTMLElement>("#previewContent");
 const markdownText = document.querySelector<HTMLTextAreaElement>("#markdownText");
 const renderedMarkdown = document.querySelector<HTMLElement>("#renderedMarkdown");
 const renderWarning = document.querySelector<HTMLParagraphElement>("#renderWarning");
 const copyButton = document.querySelector<HTMLButtonElement>("#copyButton");
 const downloadButton = document.querySelector<HTMLButtonElement>("#downloadButton");
+const detailsToggleButton = document.querySelector<HTMLButtonElement>("#detailsToggleButton");
 const plainTextViewButton = document.querySelector<HTMLButtonElement>("#plainTextViewButton");
 const renderedViewButton = document.querySelector<HTMLButtonElement>("#renderedViewButton");
 const splitViewButton = document.querySelector<HTMLButtonElement>("#splitViewButton");
@@ -22,6 +25,7 @@ const autoUpdatePreviewInput = document.querySelector<HTMLInputElement>("#autoUp
 const updatePreviewButton = document.querySelector<HTMLButtonElement>("#updatePreviewButton");
 const modifiedStatus = document.querySelector<HTMLElement>("#modifiedStatus");
 
+const NARROW_VIEWPORT_QUERY = "(max-width: 640px)";
 const LARGE_MARKDOWN_RENDER_WARNING_CHARS = 100_000;
 const LIVE_PREVIEW_MAX_CHARS = 50_000;
 
@@ -34,6 +38,10 @@ let currentMarkdown = "";
 let isModified = false;
 let isRendering = false;
 let renderAgainAfterCurrent = false;
+let detailsExpanded = true;
+let currentViewMode: ViewMode = "rendered";
+
+const narrowViewportMedia = window.matchMedia(NARROW_VIEWPORT_QUERY);
 
 copyButton?.addEventListener("click", () => {
   void copyMarkdown();
@@ -55,6 +63,10 @@ splitViewButton?.addEventListener("click", () => {
   void setViewMode("split");
 });
 
+detailsToggleButton?.addEventListener("click", () => {
+  setDetailsExpanded(!detailsExpanded);
+});
+
 markdownText?.addEventListener("input", () => {
   handleMarkdownInput();
 });
@@ -74,9 +86,16 @@ updatePreviewButton?.addEventListener("click", () => {
   void updateRenderedPreview("manual");
 });
 
+narrowViewportMedia.addEventListener("change", () => {
+  handleViewportModeConstraints();
+});
+
 void initializePreview();
 
 async function initializePreview(): Promise<void> {
+  setDetailsExpanded(!isNarrowViewport());
+  handleViewportModeConstraints();
+
   const previewId = new URLSearchParams(location.search).get("id");
 
   if (!previewId) {
@@ -135,14 +154,16 @@ async function setViewMode(mode: ViewMode): Promise<void> {
     return;
   }
 
-  setViewButtonState(mode);
-  setPreviewContentMode(mode);
+  const nextMode = mode === "split" && isNarrowViewport() ? "rendered" : mode;
+  currentViewMode = nextMode;
+  setViewButtonState(nextMode);
+  setPreviewContentMode(nextMode);
 
   if (renderWarning) {
-    renderWarning.hidden = mode === "plain" || currentMarkdown.length < LARGE_MARKDOWN_RENDER_WARNING_CHARS;
+    renderWarning.hidden = nextMode === "plain" || currentMarkdown.length < LARGE_MARKDOWN_RENDER_WARNING_CHARS;
   }
 
-  if (mode !== "plain") {
+  if (nextMode !== "plain") {
     clearRenderDebounceTimer();
     await updateRenderedPreview("mode-switch");
   }
@@ -211,6 +232,41 @@ function setPreviewContentMode(mode: ViewMode): void {
   previewContent?.classList.toggle("mode-split", mode === "split");
 }
 
+function setDetailsExpanded(expanded: boolean): void {
+  detailsExpanded = expanded;
+  previewPage?.setAttribute("data-details-expanded", String(expanded));
+  previewPage?.classList.toggle("details-expanded", expanded);
+  previewPage?.classList.toggle("details-collapsed", !expanded);
+
+  if (previewDetails) {
+    previewDetails.hidden = !expanded;
+    previewDetails.setAttribute("aria-hidden", String(!expanded));
+  }
+
+  if (detailsToggleButton) {
+    detailsToggleButton.textContent = expanded ? "Hide details" : "Details";
+    detailsToggleButton.setAttribute("aria-expanded", String(expanded));
+  }
+}
+
+function isNarrowViewport(): boolean {
+  return narrowViewportMedia.matches;
+}
+
+function handleViewportModeConstraints(): void {
+  const isNarrow = isNarrowViewport();
+
+  if (splitViewButton) {
+    splitViewButton.hidden = isNarrow;
+    splitViewButton.disabled = isNarrow;
+    splitViewButton.setAttribute("aria-hidden", String(isNarrow));
+  }
+
+  if (isNarrow && currentViewMode === "split") {
+    void setViewMode("rendered");
+  }
+}
+
 async function copyMarkdown(): Promise<void> {
   if (!previewPayload) {
     return;
@@ -268,6 +324,7 @@ function setStatus(message: string, kind?: "success" | "error"): void {
 function setControlsDisabled(disabled: boolean): void {
   if (copyButton) copyButton.disabled = disabled;
   if (downloadButton) downloadButton.disabled = disabled;
+  if (detailsToggleButton) detailsToggleButton.disabled = disabled;
   updatePreviewButtonState(disabled);
 }
 
