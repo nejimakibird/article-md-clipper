@@ -734,7 +734,7 @@ function currentFilterMode(): FilterMode {
 
 function currentOutputMode(): OutputMode {
   const value = outputModeSelect?.value;
-  return value === "copy" || value === "preview" ? value : "download";
+  return value === "preview" ? "preview" : "download";
 }
 
 function updateFilterPlaceholders(): void {
@@ -820,7 +820,7 @@ function applySiteSettings(settings: SiteSettings): void {
   if (includeFilterInput) includeFilterInput.value = settings.includeFilter;
   if (excludeFilterInput) excludeFilterInput.value = settings.excludeFilter;
   if (filterModeSelect) filterModeSelect.value = settings.filterMode;
-  if (outputModeSelect) outputModeSelect.value = settings.outputMode;
+  if (outputModeSelect) outputModeSelect.value = settings.outputMode === "preview" ? "preview" : "download";
   if (maxArticlesInput) maxArticlesInput.value = String(clampMaxArticles(settings.maxArticles));
   updateFilterPlaceholders();
   renderVisibleLinkCandidates();

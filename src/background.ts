@@ -7,14 +7,17 @@ import type {
   OpenPreviewMessage,
   OutputMessage,
   PreviewPayload,
+  PreviewPayloadUpdatedMessage,
   PreviewResponse,
-  StartJobResponse
+  StartJobResponse,
+  UpdatePreviewPayloadMessage
 } from "./types";
 
 const JOB_STATE_KEY = "articleMarkdownClipperJobState";
 const PREVIEW_PAYLOAD_PREFIX = "articleMarkdownClipperPreview:";
 const STALE_JOB_MS = 5 * 60 * 1000;
 const STALE_PREVIEW_MS = 60 * 60 * 1000;
+const generatedDownloadFilenames = new Map<string, number>();
 
 const IDLE_JOB_STATE: JobState = {
   completed: 0,
@@ -36,6 +39,10 @@ chrome.runtime.onMessage.addListener(
     _sender: chrome.runtime.MessageSender,
     sendResponse: (response: ClipResponse | JobState | PreviewResponse | StartJobResponse) => void
   ) => {
+    if (isPreviewPayloadUpdatedMessage(message)) {
+      return false;
+    }
+
     if (isOutputMessage(message)) {
       handleOutputMessage(message)
         .then(sendResponse)
@@ -62,12 +69,19 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+function isPreviewPayloadUpdatedMessage(
+  message: JobControlMessage | OutputMessage | PreviewPayloadUpdatedMessage
+): message is PreviewPayloadUpdatedMessage {
+  return message.type === "PREVIEW_PAYLOAD_UPDATED";
+}
+
 function isOutputMessage(message: JobControlMessage | OutputMessage): message is OutputMessage {
   return (
     message.type === "CLEANUP_PREVIEW_PAYLOADS" ||
     message.type === "DOWNLOAD_MARKDOWN" ||
     message.type === "GET_PREVIEW_PAYLOAD" ||
-    message.type === "OPEN_PREVIEW"
+    message.type === "OPEN_PREVIEW" ||
+    message.type === "UPDATE_PREVIEW_PAYLOAD"
   );
 }
 
@@ -84,6 +98,10 @@ async function handleOutputMessage(message: OutputMessage): Promise<ClipResponse
     return getPreviewPayload(message);
   }
 
+  if (message.type === "UPDATE_PREVIEW_PAYLOAD") {
+    return updatePreviewPayload(message);
+  }
+
   await cleanupPreviewPayloads();
   return {
     ok: true
@@ -92,11 +110,12 @@ async function handleOutputMessage(message: OutputMessage): Promise<ClipResponse
 
 async function downloadMarkdown(message: DownloadMarkdownMessage): Promise<ClipResponse> {
   const { filename, markdown } = message.payload;
+  const uniqueFilename = uniqueDownloadFilename(filename);
   const url = markdownDataUrl(markdown);
 
   const downloadId = await chrome.downloads.download({
     url,
-    filename,
+    filename: uniqueFilename,
     saveAs: false,
     conflictAction: "uniquify"
   });
@@ -104,8 +123,40 @@ async function downloadMarkdown(message: DownloadMarkdownMessage): Promise<ClipR
   return {
     ok: true,
     downloadId,
-    filename
+    filename: uniqueFilename
   };
+}
+
+function uniqueDownloadFilename(filename: string): string {
+  const timestampedFilename = addTimestampToMarkdownFilename(filename);
+  const priorCount = generatedDownloadFilenames.get(timestampedFilename) ?? 0;
+  generatedDownloadFilenames.set(timestampedFilename, priorCount + 1);
+
+  if (priorCount === 0) {
+    return timestampedFilename;
+  }
+
+  return timestampedFilename.replace(/\.md$/iu, `-${priorCount + 1}.md`);
+}
+
+function addTimestampToMarkdownFilename(filename: string): string {
+  const normalized = filename.toLowerCase().endsWith(".md") ? filename : `${filename}.md`;
+  const base = normalized.replace(/\.md$/iu, "");
+
+  return `${base}-${formatDownloadTimestamp()}.md`;
+}
+
+function formatDownloadTimestamp(date = new Date()): string {
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  const ms = pad(date.getMilliseconds(), 3);
+
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}-${ms}`;
 }
 
 async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse> {
@@ -117,6 +168,7 @@ async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse
     filename: message.payload.filename,
     markdown: message.payload.markdown,
     metadata: message.payload.metadata,
+    progress: message.payload.progress,
     previewId
   };
 
@@ -133,6 +185,45 @@ async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse
     ok: true,
     previewId,
     tabId: tab.id
+  };
+}
+
+async function updatePreviewPayload(message: UpdatePreviewPayloadMessage): Promise<PreviewResponse> {
+  const key = previewStorageKey(message.payload.previewId);
+  const stored = await chrome.storage.local.get(key);
+  const currentPayload = stored[key] as PreviewPayload | undefined;
+
+  if (!currentPayload) {
+    return {
+      ok: false,
+      error: "Preview data was not found. Generate the Markdown again."
+    };
+  }
+
+  const nextPayload: PreviewPayload = {
+    ...currentPayload,
+    markdown: message.payload.markdown,
+    metadata: message.payload.metadata ?? currentPayload.metadata,
+    progress: message.payload.progress ?? currentPayload.progress
+  };
+
+  await chrome.storage.local.set({
+    [key]: nextPayload
+  });
+
+  void chrome.runtime
+    .sendMessage({
+      type: "PREVIEW_PAYLOAD_UPDATED",
+      payload: {
+        previewId: message.payload.previewId
+      }
+    })
+    .catch(() => undefined);
+
+  return {
+    ok: true,
+    payload: nextPayload,
+    previewId: message.payload.previewId
   };
 }
 

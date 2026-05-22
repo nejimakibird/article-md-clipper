@@ -22,7 +22,7 @@ body {
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
-  padding: 20px;
+  padding: 16px;
 }
 
 .preview-header {
@@ -41,10 +41,15 @@ h1 {
 }
 
 #status {
-  min-height: 20px;
-  margin: 8px 0 0;
+  display: block;
+  height: 20px;
+  margin: 6px 0 0;
+  overflow: hidden;
   color: #526070;
   font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #status[data-kind="success"] {
@@ -55,16 +60,22 @@ h1 {
   color: #a72828;
 }
 
+.preview-toolbar {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 button {
-  min-height: 38px;
+  min-height: 34px;
   border: 0;
   border-radius: 6px;
-  padding: 0 14px;
+  padding: 0 12px;
   color: #ffffff;
   background: #245bdb;
   font: inherit;
@@ -81,6 +92,15 @@ button:disabled {
   opacity: 0.72;
 }
 
+button.secondary {
+  color: #26313d;
+  background: #eef3f8;
+}
+
+button.secondary:hover {
+  background: #e1e9f2;
+}
+
 .view-controls {
   display: inline-grid;
   grid-template-columns: repeat(3, minmax(90px, 1fr));
@@ -92,7 +112,7 @@ button:disabled {
 }
 
 .view-controls button {
-  min-height: 34px;
+  min-height: 32px;
   border-radius: 0;
   color: #26313d;
   background: transparent;
@@ -165,9 +185,22 @@ button:disabled {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-height: 0;
-  margin-top: 14px;
+  margin-top: 10px;
+}
+
+.preview-details {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.preview-details[hidden],
+.preview-page[data-details-expanded="false"] .preview-details,
+.details-collapsed .preview-details {
+  display: none !important;
 }
 
 .preview-content {
@@ -207,7 +240,8 @@ button:disabled {
   gap: 8px;
 }
 
-.metadata div {
+.metadata div,
+.progress-details div {
   min-width: 0;
   border: 1px solid #d9e0e8;
   border-radius: 6px;
@@ -215,30 +249,43 @@ button:disabled {
   background: #ffffff;
 }
 
-.metadata .source {
+.metadata .source,
+.progress-details .progress-current {
   grid-column: 1 / -1;
 }
 
 .metadata span,
-.metadata strong {
+.metadata strong,
+.progress-details span,
+.progress-details strong {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.metadata span {
+.metadata span,
+.progress-details span {
   margin-bottom: 4px;
   color: #617082;
   font-size: 12px;
 }
 
-.metadata strong {
+.metadata strong,
+.progress-details strong {
   color: #17202a;
   font-size: 13px;
   font-weight: 650;
 }
 
+.progress-details {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+}
+
 textarea {
   flex: 1 1 0;
+  width: 100%;
   height: auto;
   min-height: 0;
   resize: none;
@@ -253,6 +300,7 @@ textarea {
 
 .rendered-markdown {
   flex: 1 1 0;
+  width: 100%;
   height: auto;
   min-width: 0;
   min-height: 0;
@@ -377,14 +425,14 @@ textarea {
   height: auto;
 }
 
-.rendered-markdown:not(.split-pane) > * {
+.mode-rendered .rendered-markdown > * {
   max-width: 1040px;
   margin-right: auto;
   margin-left: auto;
 }
 
-.rendered-markdown:not(.split-pane) table,
-.rendered-markdown:not(.split-pane) pre {
+.mode-rendered .rendered-markdown table,
+.mode-rendered .rendered-markdown pre {
   max-width: 1040px;
 }
 
@@ -392,37 +440,117 @@ textarea {
   padding: 22px;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .preview-page {
-    padding: 14px;
+    padding: 8px;
   }
 
   .preview-header {
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  h1 {
+    font-size: 16px;
+  }
+
+  #status {
+    height: 16px;
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .preview-toolbar {
+    gap: 6px;
+    justify-items: stretch;
   }
 
   .actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
   }
 
-  .metadata {
+  button,
+  .view-controls button {
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .preview-shell {
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .preview-details {
+    gap: 6px;
+  }
+
+  .metadata,
+  .progress-details {
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .metadata div,
+  .progress-details div {
+    padding: 6px 8px;
+  }
+
+  .metadata span,
+  .progress-details span {
+    margin-bottom: 2px;
+    font-size: 11px;
+  }
+
+  .metadata strong,
+  .progress-details strong {
+    font-size: 12px;
+  }
+
+  .editor-controls {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .editor-controls button {
+    min-height: 28px;
+    font-size: 12px;
+  }
+
+  .modified-status {
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+
+  .render-warning {
+    padding: 6px 8px;
+    font-size: 12px;
   }
 
   .view-controls {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     width: 100%;
   }
 
+  #splitViewButton {
+    display: none;
+  }
+
   .mode-split {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    display: flex;
   }
 
   .rendered-markdown {
-    padding: 16px;
+    padding: 12px;
     font-size: 15px;
+  }
+
+  textarea {
+    padding: 10px;
+    font-size: 12px;
   }
 }
