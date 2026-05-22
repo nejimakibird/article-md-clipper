@@ -17,6 +17,7 @@ const JOB_STATE_KEY = "articleMarkdownClipperJobState";
 const PREVIEW_PAYLOAD_PREFIX = "articleMarkdownClipperPreview:";
 const STALE_JOB_MS = 5 * 60 * 1000;
 const STALE_PREVIEW_MS = 60 * 60 * 1000;
+const generatedDownloadFilenames = new Map<string, number>();
 
 const IDLE_JOB_STATE: JobState = {
   completed: 0,
@@ -109,11 +110,12 @@ async function handleOutputMessage(message: OutputMessage): Promise<ClipResponse
 
 async function downloadMarkdown(message: DownloadMarkdownMessage): Promise<ClipResponse> {
   const { filename, markdown } = message.payload;
+  const uniqueFilename = uniqueDownloadFilename(filename);
   const url = markdownDataUrl(markdown);
 
   const downloadId = await chrome.downloads.download({
     url,
-    filename,
+    filename: uniqueFilename,
     saveAs: false,
     conflictAction: "uniquify"
   });
@@ -121,8 +123,40 @@ async function downloadMarkdown(message: DownloadMarkdownMessage): Promise<ClipR
   return {
     ok: true,
     downloadId,
-    filename
+    filename: uniqueFilename
   };
+}
+
+function uniqueDownloadFilename(filename: string): string {
+  const timestampedFilename = addTimestampToMarkdownFilename(filename);
+  const priorCount = generatedDownloadFilenames.get(timestampedFilename) ?? 0;
+  generatedDownloadFilenames.set(timestampedFilename, priorCount + 1);
+
+  if (priorCount === 0) {
+    return timestampedFilename;
+  }
+
+  return timestampedFilename.replace(/\.md$/iu, `-${priorCount + 1}.md`);
+}
+
+function addTimestampToMarkdownFilename(filename: string): string {
+  const normalized = filename.toLowerCase().endsWith(".md") ? filename : `${filename}.md`;
+  const base = normalized.replace(/\.md$/iu, "");
+
+  return `${base}-${formatDownloadTimestamp()}.md`;
+}
+
+function formatDownloadTimestamp(date = new Date()): string {
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  const ms = pad(date.getMilliseconds(), 3);
+
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}-${ms}`;
 }
 
 async function openPreview(message: OpenPreviewMessage): Promise<PreviewResponse> {
